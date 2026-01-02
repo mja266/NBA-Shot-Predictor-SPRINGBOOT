@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>NBA Shot Predictor</title>
+    <style>
+        body{
+            margin:0;
+            font-family:Arial, sans-serif;
+            background:#0d0d0d;
+            color:#fff;
+        }
+        .title{
+            text-align:center;
+            padding:16px;
+            font-size:22px;
+            font-weight:bold;
+            color:#f5a623;
+        }
+        .container{
+            display:flex;
+            gap:16px;
+            padding:16px;
+            height:calc(100vh - 80px);
+            box-sizing:border-box;
+        }
+        .panel{
+            width:340px;
+            background:#161616;
+            border-radius:10px;
+            padding:14px;
+            box-shadow:0 0 12px rgba(0,0,0,.6);
+        }
+        label{
+            display:block;
+            font-size:12px;
+            margin:10px 0 4px;
+            color:#f5a623;
+            font-weight:bold;
+        }
+        select,input{
+            width:100%;
+            padding:8px;
+            border-radius:6px;
+            border:1px solid #2a2a2a;
+            background:#111;
+            color:#fff;
+            box-sizing:border-box;
+            outline:none;
+        }
+        .btn{
+            width:100%;
+            margin-top:14px;
+            padding:10px;
+            border:none;
+            border-radius:6px;
+            cursor:pointer;
+            font-weight:bold;
+            background:#f5a623;
+            color:#000;
+        }
+        .result{
+            margin-top:10px;
+            font-size:13px;
+            min-height:18px;
+        }
+        .barWrap{
+            margin-top:8px;
+            display:flex;
+            align-items:center;
+            gap:8px;
+            font-size:11px;
+            color:#aaa;
+        }
+        .bar{
+            flex:1;
+            height:8px;
+            border-radius:6px;
+            background:linear-gradient(90deg, red, yellow, lime);
+            position:relative;
+            overflow:hidden;
+        }
+        .marker{
+            position:absolute;
+            top:-2px;
+            width:2px;
+            height:12px;
+            background:#fff;
+            left:50%;
+        }
+        .courtWrap{
+            flex:1;
+            background:#111;
+            border-radius:10px;
+            box-shadow:0 0 12px rgba(0,0,0,.6);
+            display:flex;
+            justify-content:center;
+            align-items:center;
+            position:relative;
+        }
+        canvas{
+            width:92%;
+            max-width:900px;
+            aspect-ratio: 16 / 9;
+        }
+    </style>
+</head>
+<body>
+<div class="title">🏀 NBA Shot Predictor</div>
+
+<div class="container">
+    <div class="panel">
+        <label>Team</label>
+        <select id="team"></select>
+
+        <label>Player</label>
+        <select id="player"></select>
+
+        <label>Period (1–4)</label>
+        <input id="quarter" type="number" min="1" max="4" value="4"/>
+
+        <label>Time remaining (mm:ss)</label>
+        <input id="time_left" type="text" value="2:00"/>
+
+        <label>Shot type</label>
+        <select id="shot_type">
+            <option>2PT Field Goal</option>
+            <option>3PT Field Goal</option>
+        </select>
+
+        <label>X coordinate (0–50)</label>
+        <input id="x" type="number" min="0" max="50" step="0.1" value="25"/>
+
+        <label>Y coordinate (0–50)</label>
+        <input id="y" type="number" min="0" max="50" step="0.1" value="25"/>
+
+        <button class="btn" id="predictBtn">Predict</button>
+
+        <div class="result" id="result"></div>
+
+        <div class="barWrap">
+            <span>Lower</span>
+            <div class="bar"><div id="probMarker" class="marker"></div></div>
+            <span>Higher</span>
+        </div>
+
+        <div style="margin-top:6px;font-size:11px;color:#777;">
+            Click on the court to set shot location. Court shows red (missed) or green (made).
+        </div>
+    </div>
+
+    <div class="courtWrap">
+        <canvas id="court" width="1000" height="560"></canvas>
+    </div>
+</div>
+
+<script>
+    // Spring Boot backend base
+    const backendURL = "";
+
+    const els = {
+        team: document.getElementById("team"),
+        player: document.getElementById("player"),
+        quarter: document.getElementById("quarter"),
+        time_left: document.getElementById("time_left"),
+        shot_type: document.getElementById("shot_type"),
+        x: document.getElementById("x"),
+        y: document.getElementById("y"),
+        predictBtn: document.getElementById("predictBtn"),
+        result: document.getElementById("result"),
+        probMarker: document.getElementById("probMarker"),
+    };
+
+    const canvas = document.getElementById("court");
+    const ctx = canvas.getContext("2d");
+
+    function drawCourtBase(){
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle="#0f0f0f";
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+
+        // Half-court lines (minimal, matches your existing look)
+        ctx.strokeStyle="rgba(255,255,255,0.25)";
+        ctx.lineWidth=4;
+
+        // paint
+        ctx.strokeRect(canvas.width*0.42, canvas.height*0.08, canvas.width*0.16, canvas.height*0.44);
+
+        // rim + backboard
+        ctx.beginPath();
+        ctx.arc(canvas.width*0.5, canvas.height*0.12, 22, 0, Math.PI*2);
+        ctx.stroke();
+
+        // 3pt arc
+        ctx.beginPath();
+        ctx.arc(canvas.width*0.5, canvas.height*0.52, canvas.width*0.33, Math.PI*1.05, Math.PI*1.95);
+        ctx.stroke();
+    }
+
+    function drawShotMarker(x50,y50,isMade){
+        const x = (x50/50)*canvas.width;
+        const y = canvas.height - (y50/50)*canvas.height;
+
+        ctx.beginPath();
+        ctx.fillStyle = isMade ? "lime" : "red";
+        ctx.arc(x,y,10,0,Math.PI*2);
+        ctx.fill();
+    }
+
+    async function loadTeams(){
+        const r = await fetch(`${backendURL}/teams`);
+        const d = await r.json();
+        if(!d.ok){ els.result.innerHTML=`<span style="color:red;">❌ ${d.error||"Failed to load teams"}</span>`; return; }
+
+        els.team.innerHTML="";
+        d.teams.forEach(t=>{
+            const opt=document.createElement("option");
+            opt.value=t; opt.textContent=t;
+            els.team.appendChild(opt);
+        });
+
+        await loadPlayers();
+    }
+
+    async function loadPlayers(){
+        const team = els.team.value;
+        const r = await fetch(`${backendURL}/players?team=${encodeURIComponent(team)}`);
+        const d = await r.json();
+        if(!d.ok){ els.result.innerHTML=`<span style="color:red;">❌ ${d.error||"Failed to load players"}</span>`; return; }
+
+        els.player.innerHTML="";
+        d.players.forEach(p=>{
+            const opt=document.createElement("option");
+            opt.value=p; opt.textContent=p;
+            els.player.appendChild(opt);
+        });
+    }
+
+    els.team.addEventListener("change", loadPlayers);
+
+    async function predict(){
+        const payload = {
+            team: els.team.value,
+            player: els.player.value,
+            quarter: Number(els.quarter.value),
+            time_left: els.time_left.value,
+            shot_type: els.shot_type.value,
+            x: Number(els.x.value),
+            y: Number(els.y.value)
+        };
+
+        const r = await fetch(`${backendURL}/predict`,{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify(payload)
+        });
+
+        const d = await r.json();
+        if(!d.ok){
+            els.result.innerHTML=`<span style="color:red;">❌ ${d.error}</span>`;
+            return;
+        }
+
+        const color = d.prediction_label==="MADE" ? "lime" : "red";
+        const pct = (d.made_probability*100).toFixed(1);
+
+        // Required: include quarter, time left, X, Y, team, player, shot made + percentage
+        els.result.innerHTML =
+            `<span style="color:${color};">
+          ${d.team} — ${d.player} — Q${d.quarter} — ${d.time_left} — (${d.x.toFixed(1)}, ${d.y.toFixed(1)}) — ${d.prediction_label} (${pct}% chance)
+        </span>`;
+
+        // move probability marker
+        els.probMarker.style.left = `${Math.max(0,Math.min(100,pct))}%`;
+
+        drawCourtBase();
+        drawShotMarker(payload.x, payload.y, d.prediction_label==="MADE");
+    }
+
+    els.predictBtn.addEventListener("click", predict);
+
+    // Click-to-shoot
+    canvas.addEventListener("click", async e=>{
+        const rect = canvas.getBoundingClientRect();
+        const x = ((e.clientX - rect.left) / rect.width) * 50;
+        const y = ((rect.height - (e.clientY - rect.top)) / rect.height) * 50;
+        els.x.value = x.toFixed(1);
+        els.y.value = y.toFixed(1);
+        await predict();
+    });
+
+    drawCourtBase();
+    loadTeams();
+</script>
+</body>
+</html>
